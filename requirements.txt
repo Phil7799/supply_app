@@ -45,7 +45,7 @@ fastjsonschema==2.16.2
 filelock==3.8.2
 Fiona==1.9.4.post1
 Flask==2.2.2
-folium==0.14.0
+folium==0.12.1
 fonttools==4.33.3
 geographiclib==2.0
 geopandas==0.13.2

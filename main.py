@@ -1,194 +1,463 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-import openpyxl 
+import pydeck as pdk
 
-# Set page configuration
-st.set_page_config(
-    page_title="Little Loan Dashboard",
-    page_icon="🚕",
-    layout="wide",
-    initial_sidebar_state="expanded"  # Expand sidebar by default
-)
-
-# Load data from Excel
-@st.cache
+# Loading data
+@st.cache_data
 def load_data():
-    df = pd.read_excel(r'C:\streamlitDashboard\Loans2024.xlsx')
+    df = pd.read_excel(r'C:\streamlitDashboard\requests.xlsx')
     return df
 
+# Set page configuration to wide
+st.set_page_config(page_title="Supply Dashboard", page_icon="🚕", layout="wide")
+
+# Loading data
 df = load_data()
 
-# Apply custom styling
-st.markdown(
-    """
-    <style>
-        body {
-            background-color: #1E1B1A; /* Dark grey background */
-            color: white; /* White text */
-        }
-
-        .sidebar .sidebar-content {
-            background-color: #1E1B1A; /* Dark sidebar */
-            color: white; /* White text in sidebar */
-        }
-
-        .kpi-card {
-            background-color: #030C7A; /* Blue background for KPI cards */
-            padding: 20px;
-            margin: 10px;
-            border-radius: 10px;
-        }
-
-        .kpi-title {
-            font-size: 24px;
-            font-weight: bold;
-            color: #9DA0C2; /* white text for KPI titles */
-            margin-bottom: 10px;
-        }
-
-        .kpi-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: white; /* White text for KPI values */
-        }
-
-        .chart-container {
-            margin-top: 20px;
-        }
-
-        .chart-title {
-            font-size: 24px;
-            font-weight: bold;
-            color: #1E88E5;
-            margin-bottom: 10px;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# Display the data
-st.title('🚕Little Loan Dashboard')
-
-# Add interactive elements to the sidebar
+# Adding Filters
 st.sidebar.title('Filters')
+selected_cities = st.sidebar.multiselect('Select City', ['All'] + sorted(df['CITY'].unique(), key=str))
+selected_vehicle_types = st.sidebar.multiselect('Select Vehicle Type', ['All'] + sorted(df['VEHICLETYPE'].astype(str).unique()))
+selected_date_from = st.sidebar.date_input('Select Date From')
+selected_date_to = st.sidebar.date_input('Select Date To')
+selected_driver = st.sidebar.selectbox('Select Driver', ['All'] + sorted(df['DRIVER'].astype(str).unique()))
+selected_trip_type = st.sidebar.selectbox('Select Trip Type', ['All'] + sorted(df['TRIPTYPE'].astype(str).unique()))
+selected_rider = st.sidebar.selectbox('Select Rider', ['All'] + sorted(df['Rider Mobile Number'].astype(str).unique()))
+selected_country = st.sidebar.selectbox('Select Country', ['All'] + sorted(df['COUNTRY'].astype(str).unique()))
+selected_region = st.sidebar.selectbox('Select Region', ['All'] + sorted(df['Region'].unique(), key=str))
+selected_corporate = st.sidebar.selectbox('Select Corporate', ['All'] + sorted(df['Corporate'].unique(), key=str))
 
-# Filter by Loan ID
-loan_ids = df['LoanID'].unique()
-selected_loan_id = st.sidebar.selectbox('Select Loan ID', ['All'] + list(loan_ids))
+# Converting selected dates to Pandas datetime objects
+selected_date_from = pd.Timestamp(selected_date_from)
+selected_date_to = pd.Timestamp(selected_date_to)
 
-# Filter by Driver Email
-driver_emails = df['Driver Email'].unique()
-selected_driver_email = st.sidebar.selectbox('Select Driver Email', ['All'] + list(driver_emails))
+# Applying Filters
+filtered_df = df[
+    ((df['CITY'].isin(selected_cities)) | ('All' in selected_cities)) &
+    ((df['VEHICLETYPE'].astype(str).isin(selected_vehicle_types)) | ('All' in selected_vehicle_types)) &
+    ((df['Date'] >= selected_date_from) & (df['Date'] <= selected_date_to)) &
+    ((df['DRIVER'] == selected_driver) | (selected_driver == 'All')) &
+    ((df['TRIPTYPE'] == selected_trip_type) | (selected_trip_type == 'All')) &
+    ((df['Rider Mobile Number'].astype(str) == selected_rider) | (selected_rider == 'All')) &
+    ((df['COUNTRY'] == selected_country) | (selected_country == 'All')) &
+    ((df['Region'] == selected_region) | (selected_region == 'All')) &
+    ((df['Corporate'] == selected_corporate) | (selected_corporate == 'All'))
+]    
 
-# Filter by Date of Issue
-date_issued_range = st.sidebar.date_input('Select Date Issued Range', [df['Date of issue'].min(), df['Date of issue'].max()])
-date_issued_start, date_issued_end = date_issued_range
+# Dropping rows with NaN values in Latitude and Longitude columns
+filtered_df = filtered_df.dropna(subset=['Latitude', 'Longitude'])
 
-# Apply filters
-filtered_df = df.copy()
-if selected_loan_id != 'All':
-    filtered_df = filtered_df[filtered_df['LoanID'] == selected_loan_id]
-if selected_driver_email != 'All':
-    filtered_df = filtered_df[filtered_df['Driver Email'] == selected_driver_email]
-filtered_df = filtered_df[(filtered_df['Date of issue'] >= pd.Timestamp(date_issued_start)) & 
-                           (filtered_df['Date of issue'] <= pd.Timestamp(date_issued_end))]
+# Calculating KPIs for filtered data
+total_requests = len(filtered_df)
+total_trips = filtered_df[filtered_df['Category'] == 'Trips'].shape[0]
+driver_cancellations = filtered_df[filtered_df['Category'] == 'Driver Cancellation'].shape[0]
+rider_cancellations = filtered_df[filtered_df['Category'] == 'Rider Cancellation'].shape[0]
+no_driver_found = filtered_df[filtered_df['Category'] == 'No Drivers Found'].shape[0]
+timeouts = filtered_df[filtered_df['Category'] == 'Timeout'].shape[0]
 
-# Calculate KPIs based on filtered data
-total_amount_issued = filtered_df['Amount Issued'].sum()
-total_amount_expected = filtered_df['Amount Payable'].sum()
-total_amount_paid = filtered_df['Amount Paid'].sum()
-total_outstanding_amount = filtered_df['Outstanding Amount'].sum()
+# Checking if total_trips is zero to avoid division by zero
+if total_trips == 0:
+    fulfillment_rate = 0
+    acceptance_rate = 0
+    driver_canc_rate = 0
+else:
+    fulfillment_rate = round((total_trips * 100) / (total_trips + driver_cancellations + rider_cancellations), 2)
+    acceptance_rate = round((total_trips * 100) / (total_trips + driver_cancellations + rider_cancellations + timeouts), 2)
+    driver_canc_rate = round((driver_cancellations * 100) / (total_trips + driver_cancellations + rider_cancellations + timeouts), 2)
 
-loans_due = filtered_df[filtered_df['Date due'] < pd.Timestamp.now()]
-amount_paid_for_loans_due = loans_due['Amount Paid'].sum()
-outstanding_amount_for_loans_due = loans_due['Outstanding Amount'].sum()
+# Title of the dashboard
+st.title('🚕 Supply Requests Dashboard')
 
-# Display KPIs in a scorecard format
-st.write("## Key Performance Indicators (KPIs)")
+# KPIs Section
+st.write('## Supply KPIs')
 
-# Define the HTML structure for the KPI scorecards
-kpi_scorecard = """
-<div style="display: flex; flex-wrap: wrap; justify-content: space-between;">
+# Define KPIs
+kpi_data = {
+    'Total Requests': total_requests,
+    'Total Trips': total_trips,
+    'Driver Cancellations': driver_cancellations,
+    'Rider Cancellations': rider_cancellations,
+    'Timeouts': timeouts,
+    'No Driver Found Cases': no_driver_found,
+    'Fulfillment Rate (%)': fulfillment_rate,
+    'Acceptance Rate (%)': acceptance_rate,
+    'Driver Cancellation Rate (%)': driver_canc_rate
+}
 
-<div class="kpi-card" style="flex: 1; margin-right: 10px;">
-        <div class="kpi-title">Total amount issued:</div>
-        <div class="kpi-value">{}</div>
-    </div>
-
- <div class="kpi-card" style="flex: 1; margin-right: 10px;">
-        <div class="kpi-title">Total amount expected to be paid:</div>
-        <div class="kpi-value">{}</div>
-    </div>
-
-<div class="kpi-card" style="flex: 1;">
-        <div class="kpi-title">Total amount paid so far:</div>
-        <div class="kpi-value">{}</div>
-    </div>
-
-</div>
-
-<div style="margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: space-between;">
-
-<div class="kpi-card" style="flex: 1; margin-right: 10px;">
-        <div class="kpi-title">Total outstanding amount:</div>
-        <div class="kpi-value">{}</div>
-    </div>
-
-<div class="kpi-card" style="flex: 1; margin-right: 10px;">
-        <div class="kpi-title">Loans that are due:</div>
-        <div class="kpi-value">{}</div>
-    </div>
-
-<div class="kpi-card" style="flex: 1;">
-        <div class="kpi-title">Amount paid for loans that are due:</div>
-        <div class="kpi-value">{}</div>
-    </div>
-
-</div>
-
-<div style="margin-top: 20px; display: flex; justify-content: left;">
-    <div class="kpi-card" style="margin-right: 10px;">
-        <div class="kpi-title">Outstanding amount for loans that due:</div>
-        <div class="kpi-value">{}</div>
-    </div>
-</div>
-
+# CSS styles for the box
+box_style = """
+    background-color: #00008B;
+    color: white;
+    padding: 20px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+    font-size: 18px;
+    font-style: italic;
 """
 
-# Populate the HTML structure with KPI values
-kpi_scorecard = kpi_scorecard.format(
-    total_amount_issued,
-    total_amount_expected,
-    total_amount_paid,
-    total_outstanding_amount,
-    len(loans_due),
-    amount_paid_for_loans_due,
-    outstanding_amount_for_loans_due
-)
+# Arrange KPIs in a 3x3 grid
+col1, col2, col3 = st.columns(3)
 
-# Display the KPI scorecard
-st.markdown(kpi_scorecard, unsafe_allow_html=True)
+# Display KPIs in each column with styled boxes
+with col1:
+    for kpi_name, kpi_value in kpi_data.items():
+        if kpi_name in ['Total Requests', 'Total Trips', 'Driver Cancellations']:
+            st.markdown(f'<div style="{box_style}">{kpi_name}: {kpi_value}</div>', unsafe_allow_html=True)
+
+with col2:
+    for kpi_name, kpi_value in kpi_data.items():
+        if kpi_name in ['Rider Cancellations', 'Timeouts', 'No Driver Found Cases']:
+            st.markdown(f'<div style="{box_style}">{kpi_name}: {kpi_value}</div>', unsafe_allow_html=True)
+
+with col3:
+    for kpi_name, kpi_value in kpi_data.items():
+        if kpi_name in ['Fulfillment Rate (%)', 'Acceptance Rate (%)', 'Driver Cancellation Rate (%)']:
+            st.markdown(f'<div style="{box_style}">{kpi_name}: {kpi_value}</div>', unsafe_allow_html=True)
+
 
 # Display filtered data
-st.write("## Filtered Data")
+st.write('## 📑 Filtered Raw Data')
+
+# Display the DataFrame without styling
 st.write(filtered_df)
 
-# Line chart for sum of amounts issued by date
-st.write("## Amount Issued Over Time")
-chart_data = filtered_df.groupby(pd.Grouper(key='Date of issue', freq='D'))['Amount Issued'].sum().reset_index()
-chart = alt.Chart(chart_data).mark_line(interpolate='basis').encode(
-    x=alt.X('Date of issue:T', title='Date'),
-    y=alt.Y('Amount Issued:Q', title='Amount Issued'),
-    tooltip=['Date of issue', 'Amount Issued']
+# Data Visualization
+st.write('## 📊 Data Visualization')
+
+# Aggregate data by vehicle type and date
+request_count_by_date = filtered_df.groupby(['VEHICLETYPE', 'Date']).size().reset_index(name='count')
+
+# Create a line chart using Altair with smooth lines
+chart1 = alt.Chart(request_count_by_date).mark_line(interpolate='basis').encode(
+    x=alt.X('Date:T', axis=alt.Axis(format='%Y-%m-%d'), title='Date'),
+    y=alt.Y('count:Q', axis=alt.Axis(title='Request Count')),
+    color='VEHICLETYPE:N',
+    tooltip=['Date', 'count']
 ).properties(
-    width=800,
-    height=400
+    width=1500,
+    height=400,
+    title='Request Count by Vehicle Type Over Time'
+).interactive()
+
+# Render the chart
+st.altair_chart(chart1)
+
+# Aggregate data by Category and Hour
+request_count_by_hour = filtered_df.groupby(['Category', 'Hour']).size().reset_index(name='count')
+
+# Create a line chart using Altair with smooth lines
+chart2 = alt.Chart(request_count_by_hour).mark_line(interpolate='basis').encode(
+    x=alt.X('Hour:O', title='Hour'),
+    y=alt.Y('count:Q', axis=alt.Axis(title='Request Count')),
+    color='Category:N',
+    tooltip=['Hour', 'count']
+).properties(
+    width=1500,
+    height=400,
+    title='Request Count by Category Over Hour'
+).interactive()
+
+# Render the chart
+st.altair_chart(chart2)
+
+# Display map chart of requests
+st.write('## 🌍 Map of Requests')
+
+# Filter out rows with missing latitude or longitude values
+filtered_df = filtered_df.dropna(subset=['Latitude', 'Longitude'])
+
+# Rename columns to match expected names for latitude and longitude
+filtered_df = filtered_df.rename(columns={'Latitude': 'LAT', 'Longitude': 'LON'})
+
+# Define the map layer with Google Maps as the basemap
+layer = pdk.Layer(
+    'ScatterplotLayer',
+    data=filtered_df,
+    get_position='[LON, LAT]',
+    get_radius=20,  # Set radius of the points
+    get_fill_color='[200, 30, 0, 160]',  # Color of the points
+    pickable=True,
 )
 
-# Title for the line chart
-st.markdown("<div class='chart-title'>Amount Issued Over Time</div>", unsafe_allow_html=True)
+# Set the initial view state (latitude, longitude, zoom level)
+view_state = pdk.ViewState(
+    latitude=filtered_df['LAT'].mean(),
+    longitude=filtered_df['LON'].mean(),
+    zoom=10,  # You can adjust this value for the desired zoom level
+    pitch=50,  # Adjust the pitch for 3D view
+)
 
-# Display the line chart
-st.altair_chart(chart, use_container_width=True)
+# Create the deck.gl map
+r = pdk.Deck(
+    map_style='mapbox://styles/mapbox/streets-v11',  # Google Maps style
+    layers=[layer],
+    initial_view_state=view_state,
+)
+
+# Render the map in Streamlit
+st.pydeck_chart(r)
+
+# Display filtered data
+st.write('## 📈 Driver Data Table')
+
+# Filter out 'No Drivers Found' from the total requests
+filtered_df = filtered_df[filtered_df['Category'] != 'No Drivers Found']
+
+# Calculate total requests per driver
+driver_requests = filtered_df.groupby('DRIVER').size().reset_index(name='Total Requests')
+
+# Filter out 'Trips' from the filtered DataFrame
+filtered_df_trips = filtered_df[filtered_df['Category'] == 'Trips']
+
+# Group data by driver and calculate total trips
+driver_trips = filtered_df_trips.groupby('DRIVER').size().reset_index(name='Total Trips')
+
+# Merge total requests and total trips tables on DRIVER column
+driver_kpis = pd.merge(driver_requests, driver_trips, on='DRIVER', how='left')
+
+# Filter out 'Driver Cancellation' from the filtered DataFrame
+filtered_df_driver_cancellations = filtered_df[filtered_df['Category'] == 'Driver Cancellation']
+
+# Group data by driver and calculate total driver cancellations
+driver_cancellations = filtered_df_driver_cancellations.groupby('DRIVER').size().reset_index(name='Driver Cancellation')
+
+# Merge total requests, total trips, and total driver cancellations tables on DRIVER column
+driver_kpis = pd.merge(driver_kpis, driver_cancellations, on='DRIVER', how='left')
+
+# Filter out 'Rider Cancellation' from the filtered DataFrame
+filtered_df_rider_cancellations = filtered_df[filtered_df['Category'] == 'Rider Cancellation']
+
+# Group data by driver and calculate total rider cancellations
+rider_cancellations = filtered_df_rider_cancellations.groupby('DRIVER').size().reset_index(name='Rider Cancellation')
+
+# Merge total requests, total trips, and total rider cancellations tables on DRIVER column
+driver_kpis = pd.merge(driver_kpis, rider_cancellations, on='DRIVER', how='left')
+
+# Filter out 'Timeouts' from the filtered DataFrame
+filtered_df_timeouts = filtered_df[filtered_df['Category'] == 'Timeout']
+
+# Group data by driver and calculate total timeouts
+timeouts = filtered_df_timeouts.groupby('DRIVER').size().reset_index(name='Timeout')
+
+# Merge total requests, total trips, and total timeouts tables on DRIVER column
+driver_kpis = pd.merge(driver_kpis, timeouts, on='DRIVER', how='left')
+
+# Fill NaN values with 0
+driver_kpis.fillna(0, inplace=True)
+
+# Calculate Fulfillment Rate
+driver_kpis['Fulfillment Rate (%)'] = (driver_kpis['Total Trips'] / (driver_kpis['Total Trips'] + driver_kpis['Driver Cancellation'] + driver_kpis['Rider Cancellation'])) * 100
+
+# Calculate Acceptance Rate
+driver_kpis['Acceptance Rate (%)'] = (driver_kpis['Total Trips'] / (driver_kpis['Total Trips'] + driver_kpis['Driver Cancellation'] + driver_kpis['Rider Cancellation']+ driver_kpis['Timeout'])) * 100
+
+# Calculate Driver Cancellation Rate
+driver_kpis['Driver Cancellation Rate (%)'] = (driver_kpis['Driver Cancellation'] / (driver_kpis['Total Requests'])) * 100
+
+# Calculate Rider Cancellation Rate
+driver_kpis['Rider Cancellation (%)'] = (driver_kpis['Rider Cancellation'] / (driver_kpis['Total Requests'])) * 100
+
+# Calculate Timeout Rate
+driver_kpis['Timeout Rate (%)'] = (driver_kpis['Timeout'] / (driver_kpis['Total Requests'])) * 100
+
+# Displaying the table
+st.write(driver_kpis)
+
+# Display filtered data
+st.write('## 📈 Clients Data Table')
+
+# Filter out 'No Drivers Found' from the total requests
+filtered_df = filtered_df[filtered_df['Category'] != 'No Drivers Found']
+
+# Calculate total requests per driver
+rider_requests = filtered_df.groupby('Rider Mobile Number').size().reset_index(name='Total Requests')
+
+# Filter out 'Trips' from the filtered DataFrame
+filtered_df_trips = filtered_df[filtered_df['Category'] == 'Trips']
+
+# Group data by RIDER and calculate total trips
+rider_trips = filtered_df_trips.groupby('Rider Mobile Number').size().reset_index(name='Total Trips')
+
+# Merge total requests and total trips tables on DRIVER column
+rider_kpis = pd.merge(rider_requests, rider_trips, on='Rider Mobile Number', how='left')
+
+# Filter out 'Driver Cancellation' from the filtered DataFrame
+filtered_df_driver_cancellations = filtered_df[filtered_df['Category'] == 'Driver Cancellation']
+
+# Group data by RIDER and calculate total driver cancellations
+driver_cancellations = filtered_df_driver_cancellations.groupby('Rider Mobile Number').size().reset_index(name='Driver Cancellation')
+
+# Merge total requests, total trips, and total driver cancellations tables on DRIVER column
+rider_kpis = pd.merge(rider_kpis, driver_cancellations, on='Rider Mobile Number', how='left')
+
+# Filter out 'Rider Cancellation' from the filtered DataFrame
+filtered_df_rider_cancellations = filtered_df[filtered_df['Category'] == 'Rider Cancellation']
+
+# Group data by RIDER and calculate total rider cancellations
+rider_cancellations = filtered_df_rider_cancellations.groupby('Rider Mobile Number').size().reset_index(name='Rider Cancellation')
+
+# Merge total requests, total trips, and total rider cancellations tables on DRIVER column
+rider_kpis = pd.merge(rider_kpis, rider_cancellations, on='Rider Mobile Number', how='left')
+
+# Filter out 'Timeouts' from the filtered DataFrame
+filtered_df_timeouts = filtered_df[filtered_df['Category'] == 'Timeout']
+
+# Group data by driver and calculate total timeouts
+timeouts = filtered_df_timeouts.groupby('Rider Mobile Number').size().reset_index(name='Timeout')
+
+# Merge total requests, total trips, and total timeouts tables on DRIVER column
+rider_kpis = pd.merge(rider_kpis, timeouts, on='Rider Mobile Number', how='left')
+
+# Fill NaN values with 0
+rider_kpis.fillna(0, inplace=True)
+
+# Calculate Fulfillment Rate
+rider_kpis['Fulfillment Rate (%)'] = (rider_kpis['Total Trips'] / (rider_kpis['Total Trips'] + rider_kpis['Driver Cancellation'] + rider_kpis['Rider Cancellation'])) * 100
+
+# Calculate Acceptance Rate
+rider_kpis['Acceptance Rate (%)'] = (rider_kpis['Total Trips'] / (rider_kpis['Total Trips'] + rider_kpis['Driver Cancellation'] + rider_kpis['Rider Cancellation']+ rider_kpis['Timeout'])) * 100
+
+# Calculate Driver Cancellation Rate
+rider_kpis['Driver Cancellation Rate (%)'] = (rider_kpis['Driver Cancellation'] / (rider_kpis['Total Requests'])) * 100
+
+# Calculate Rider Cancellation Rate
+rider_kpis['Rider Cancellation (%)'] = (rider_kpis['Rider Cancellation'] / (rider_kpis['Total Requests'])) * 100
+
+# Calculate Timeout Rate
+rider_kpis['Timeout Rate (%)'] = (rider_kpis['Timeout'] / (rider_kpis['Total Requests'])) * 100
+
+# Displaying the table
+st.write(rider_kpis)
+
+# Displaying filtered data
+st.write('## 📈 Regions Data Table')
+
+# Filtering out 'No Drivers Found' from the total requests
+filtered_df = filtered_df[filtered_df['Category'] != 'No Drivers Found']
+
+# Calculating total requests per region
+region_requests = filtered_df.groupby('Region').size().reset_index(name='Total Requests')
+
+# Filtering out 'Trips' from the filtered DataFrame
+filtered_df_trips = filtered_df[filtered_df['Category'] == 'Trips']
+
+# Grouping data by region and calculate total trips
+region_trips = filtered_df_trips.groupby('Region').size().reset_index(name='Total Trips')
+
+# Merging total requests and total trips tables on Region column
+region_kpis = pd.merge(region_requests, region_trips, on='Region', how='left')
+
+# Filter out 'Driver Cancellation' from the filtered DataFrame
+filtered_df_driver_cancellations = filtered_df[filtered_df['Category'] == 'Driver Cancellation']
+
+# Grouping data by region and calculate total driver cancellations
+driver_cancellations = filtered_df_driver_cancellations.groupby('Region').size().reset_index(name='Driver Cancellation')
+
+# Merging total requests, total trips, and total driver cancellations tables on Region column
+region_kpis = pd.merge(region_kpis, driver_cancellations, on='Region', how='left')
+
+# Filtering out 'Rider Cancellation' from the filtered DataFrame
+filtered_df_rider_cancellations = filtered_df[filtered_df['Category'] == 'Rider Cancellation']
+
+# Grouping data by region and calculate total rider cancellations
+rider_cancellations = filtered_df_rider_cancellations.groupby('Region').size().reset_index(name='Rider Cancellation')
+
+# Merging total requests, total trips, and total rider cancellations tables on Region column
+region_kpis = pd.merge(region_kpis, rider_cancellations, on='Region', how='left')
+
+# Filtering out 'Timeouts' from the filtered DataFrame
+filtered_df_timeouts = filtered_df[filtered_df['Category'] == 'Timeout']
+
+# Grouping data by Region and calculate total timeouts
+timeouts = filtered_df_timeouts.groupby('Region').size().reset_index(name='Timeout')
+
+# Merging total requests, total trips, and total timeouts tables on DRIVER column
+region_kpis = pd.merge(region_kpis, timeouts, on='Region', how='left')
+
+# Fill NaN values with 0
+region_kpis.fillna(0, inplace=True)
+
+# Calculate Fulfillment Rate
+region_kpis['Fulfillment Rate (%)'] = (region_kpis['Total Trips'] / (region_kpis['Total Trips'] + region_kpis['Driver Cancellation'] + region_kpis['Rider Cancellation'])) * 100
+
+# Calculate Acceptance Rate
+region_kpis['Acceptance Rate (%)'] = (region_kpis['Total Trips'] / (region_kpis['Total Trips'] + region_kpis['Driver Cancellation'] + region_kpis['Rider Cancellation']+ region_kpis['Timeout'])) * 100
+
+# Calculate Driver Cancellation Rate
+region_kpis['Driver Cancellation Rate (%)'] = (region_kpis['Driver Cancellation'] / (region_kpis['Total Requests'])) * 100
+
+# Calculate Rider Cancellation Rate
+region_kpis['Rider Cancellation (%)'] = (region_kpis['Rider Cancellation'] / (region_kpis['Total Requests'])) * 100
+
+# Calculate Timeout Rate
+region_kpis['Timeout Rate (%)'] = (region_kpis['Timeout'] / (region_kpis['Total Requests'])) * 100
+
+# Displaying the table
+st.write(region_kpis)
+
+# Displaying filtered data
+st.write('## 📈 Corporate Data Table')
+
+# Filtering out 'No Drivers Found' from the total requests
+filtered_df = filtered_df[filtered_df['Category'] != 'No Drivers Found']
+
+# Calculating total requests per region
+corporate_requests = filtered_df.groupby('Corporate').size().reset_index(name='Total Requests')
+
+# Filtering out 'Trips' from the filtered DataFrame
+filtered_df_trips = filtered_df[filtered_df['Category'] == 'Trips']
+
+# Grouping data by corporate and calculate total trips
+corporate_trips = filtered_df_trips.groupby('Corporate').size().reset_index(name='Total Trips')
+
+# Merging total requests and total trips tables on Region column
+corporate_kpis = pd.merge(corporate_requests, corporate_trips, on='Corporate', how='left')
+
+# Filter out 'Driver Cancellation' from the filtered DataFrame
+filtered_df_driver_cancellations = filtered_df[filtered_df['Category'] == 'Driver Cancellation']
+
+# Grouping data by corporate and calculate total driver cancellations
+driver_cancellations = filtered_df_driver_cancellations.groupby('Corporate').size().reset_index(name='Driver Cancellation')
+
+# Merging total requests, total trips, and total driver cancellations tables on corporate column
+corporate_kpis = pd.merge(corporate_kpis, driver_cancellations, on='Corporate', how='left')
+
+# Filtering out 'Rider Cancellation' from the filtered DataFrame
+filtered_df_rider_cancellations = filtered_df[filtered_df['Category'] == 'Rider Cancellation']
+
+# Grouping data by corporate and calculate total rider cancellations
+rider_cancellations = filtered_df_rider_cancellations.groupby('Corporate').size().reset_index(name='Rider Cancellation')
+
+# Merging total requests, total trips, and total rider cancellations tables on corporate column
+corporate_kpis = pd.merge(corporate_kpis, rider_cancellations, on='Corporate', how='left')
+
+# Filtering out 'Timeouts' from the filtered DataFrame
+filtered_df_timeouts = filtered_df[filtered_df['Category'] == 'Timeout']
+
+# Grouping data by Region and calculate total timeouts
+timeouts = filtered_df_timeouts.groupby('Corporate').size().reset_index(name='Timeout')
+
+# Merging total requests, total trips, and total timeouts tables on DRIVER column
+corporate_kpis = pd.merge(corporate_kpis, timeouts, on='Corporate', how='left')
+
+# Fill NaN values with 0
+corporate_kpis.fillna(0, inplace=True)
+
+# Calculate Fulfillment Rate
+corporate_kpis['Fulfillment Rate (%)'] = (corporate_kpis['Total Trips'] / (corporate_kpis['Total Trips'] + corporate_kpis['Driver Cancellation'] + corporate_kpis['Rider Cancellation'])) * 100
+
+# Calculate Acceptance Rate
+corporate_kpis['Acceptance Rate (%)'] = (corporate_kpis['Total Trips'] / (corporate_kpis['Total Trips'] + corporate_kpis['Driver Cancellation'] + corporate_kpis['Rider Cancellation']+ corporate_kpis['Timeout'])) * 100
+
+# Calculate Driver Cancellation Rate
+corporate_kpis['Driver Cancellation Rate (%)'] = (corporate_kpis['Driver Cancellation'] / (corporate_kpis['Total Requests'])) * 100
+
+# Calculate Rider Cancellation Rate
+corporate_kpis['Rider Cancellation (%)'] = (corporate_kpis['Rider Cancellation'] / (corporate_kpis['Total Requests'])) * 100
+
+# Calculate Timeout Rate
+corporate_kpis['Timeout Rate (%)'] = (corporate_kpis['Timeout'] / (corporate_kpis['Total Requests'])) * 100
+
+# Displaying the table
+st.write(corporate_kpis)
