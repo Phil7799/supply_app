@@ -2,11 +2,16 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 import pydeck as pdk
+import os
 
 # Loading data
 @st.cache_data
 def load_data():
-    df = pd.read_excel(r'C:\streamlitDashboard\requests.xlsx')
+    # Get the directory of the current script
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    # Construct the path to requests.xlsx
+    file_path = os.path.join(base_dir, 'requests.xlsx')
+    df = pd.read_excel(file_path)
     return df
 
 # Set page configuration to wide
