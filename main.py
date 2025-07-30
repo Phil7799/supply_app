@@ -15,7 +15,7 @@ def load_data():
     return df
 
 # Set page configuration to wide
-st.set_page_config(page_title="Supply Dashboard", page_icon="🚕", layout="wide")
+st.set_page_config(page_title="Supply Dashboard", page_icon="https://res.cloudinary.com/dnq8ne9lx/image/upload/v1753860594/infograph_ewfmm6.ico", layout="wide")
 
 # Loading data
 df = load_data()
