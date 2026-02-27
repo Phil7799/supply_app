@@ -383,9 +383,9 @@ def _local_answer(question, kpi_dict, data, d_range):
             f"Try asking: *'Which region has the best fulfillment rate?'* or *'Give me a summary.'*")
 
 
-st.write('## 🤖 AI Data Assistant')
+st.write('## 🤖 Nexus Philip')
 st.markdown("""
-Ask me anything about the filtered data — fulfilment rates, acceptance rates, driver performance,
+Ask me anything about the filtered data fulfilment rates, acceptance rates, driver performance,
 regional breakdowns, trends, summaries, and more.
 """)
 
