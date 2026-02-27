@@ -188,14 +188,20 @@ def compute_fulfillment_pivot(data):
 fr_data = compute_fulfillment_pivot(filtered_df)
 
 if not fr_data.empty:
+    all_regions_fr = sorted(fr_data['Region'].unique().tolist(), key=str)
     heatmap_fr = alt.Chart(fr_data).mark_rect().encode(
-        x=alt.X('Region:N', title='Region', axis=alt.Axis(labelAngle=-45)),
-        y=alt.Y('Hour:O', title='Hour of Day', sort=list(range(24))),
+        x=alt.X('Hour:O', title='Hour of Day', sort=list(range(24))),
+        y=alt.Y('Region:N', title='Region', sort=all_regions_fr,
+                axis=alt.Axis(labelLimit=200)),
         color=alt.Color('Fulfillment Rate (%):Q',
                         scale=alt.Scale(scheme='redyellowgreen', domain=[0, 100]),
                         legend=alt.Legend(title='Fulfilment Rate (%)')),
         tooltip=['Region', 'Hour', 'Fulfillment Rate (%)', 'Trips', 'DC', 'RC']
-    ).properties(width=900, height=500, title='Hourly Fulfilment Rate by Region').interactive()
+    ).properties(
+        width=900,
+        height=max(300, len(all_regions_fr) * 30),
+        title='Hourly Fulfilment Rate by Region'
+    ).interactive()
     st.altair_chart(heatmap_fr, use_container_width=True)
 else:
     st.warning("Not enough data for the Fulfilment Rate heatmap with current filters.")
@@ -206,14 +212,20 @@ st.write('### Total Requests Heatmap (Region × Hour)')
 req_by_region_hour = filtered_df.groupby(['Region', 'Hour']).size().reset_index(name='Total Requests')
 
 if not req_by_region_hour.empty:
+    all_regions_req = sorted(req_by_region_hour['Region'].unique().tolist(), key=str)
     heatmap_req = alt.Chart(req_by_region_hour).mark_rect().encode(
-        x=alt.X('Region:N', title='Region', axis=alt.Axis(labelAngle=-45)),
-        y=alt.Y('Hour:O', title='Hour of Day', sort=list(range(24))),
+        x=alt.X('Hour:O', title='Hour of Day', sort=list(range(24))),
+        y=alt.Y('Region:N', title='Region', sort=all_regions_req,
+                axis=alt.Axis(labelLimit=200)),
         color=alt.Color('Total Requests:Q',
                         scale=alt.Scale(scheme='blues'),
                         legend=alt.Legend(title='Total Requests')),
         tooltip=['Region', 'Hour', 'Total Requests']
-    ).properties(width=900, height=500, title='Hourly Total Requests by Region').interactive()
+    ).properties(
+        width=900,
+        height=max(300, len(all_regions_req) * 30),
+        title='Hourly Total Requests by Region'
+    ).interactive()
     st.altair_chart(heatmap_req, use_container_width=True)
 else:
     st.warning("Not enough data for the Total Requests heatmap with current filters.")
@@ -316,6 +328,61 @@ st.write(build_kpi_table(filtered_df.copy(), 'Corporate'))
 # ─────────────────────────────────────────────
 # CHATBOT (NEW)
 # ─────────────────────────────────────────────
+
+def _local_answer(question, kpi_dict, data, d_range):
+    """Fallback local answering when API is unavailable."""
+    q = question.lower()
+    region_kpis = build_kpi_table(data.copy(), 'Region')
+
+    if 'fulfillment' in q or 'fulfilment' in q:
+        if 'region' in q or 'best' in q or 'highest' in q:
+            if not region_kpis.empty:
+                best = region_kpis.loc[region_kpis['Fulfillment Rate (%)'].idxmax()]
+                return (f"The region with the highest fulfilment rate is **{best['Region']}** "
+                        f"at **{best['Fulfillment Rate (%)']:.2f}%** "
+                        f"({int(best['Total Trips'])} trips out of {int(best['Total Requests'])} requests).")
+        if 'lowest' in q or 'worst' in q:
+            if not region_kpis.empty:
+                worst = region_kpis.loc[region_kpis['Fulfillment Rate (%)'].idxmin()]
+                return (f"The region with the lowest fulfilment rate is **{worst['Region']}** "
+                        f"at **{worst['Fulfillment Rate (%)']:.2f}%**.")
+        return (f"The overall **Fulfilment Rate** for the current filters is **{kpi_dict['Fulfillment Rate (%)']}%**. "
+                f"This is based on {kpi_dict['Total Trips']} trips vs "
+                f"{kpi_dict['Driver Cancellations']} driver cancellations and "
+                f"{kpi_dict['Rider Cancellations']} rider cancellations.")
+
+    if 'acceptance' in q:
+        return (f"The overall **Acceptance Rate** is **{kpi_dict['Acceptance Rate (%)']}%**. "
+                f"Calculated from {kpi_dict['Total Trips']} trips against all outcomes including "
+                f"{kpi_dict['Timeouts']} timeouts.")
+
+    if 'summary' in q or 'overview' in q:
+        return (f"**Dashboard Summary** (Distance filter: {d_range[0]}–{d_range[1]} km)\n\n"
+                f"- Total Requests: **{kpi_dict['Total Requests']}**\n"
+                f"- Total Trips: **{kpi_dict['Total Trips']}**\n"
+                f"- Fulfilment Rate: **{kpi_dict['Fulfillment Rate (%)']}%**\n"
+                f"- Acceptance Rate: **{kpi_dict['Acceptance Rate (%)']}%**\n"
+                f"- Driver Cancellations: **{kpi_dict['Driver Cancellations']}** "
+                f"({kpi_dict['Driver Cancellation Rate (%)']}%)\n"
+                f"- Rider Cancellations: **{kpi_dict['Rider Cancellations']}**\n"
+                f"- Timeouts: **{kpi_dict['Timeouts']}**\n"
+                f"- No Driver Found: **{kpi_dict['No Driver Found Cases']}**")
+
+    if 'driver cancell' in q:
+        return (f"Driver Cancellation Rate is **{kpi_dict['Driver Cancellation Rate (%)']}%** "
+                f"({kpi_dict['Driver Cancellations']} cancellations out of {kpi_dict['Total Requests']} requests).")
+
+    if 'distance' in q:
+        return f"The current distance from rider filter is set to **{d_range[0]} – {d_range[1]} km**."
+
+    return (f"I can answer questions about fulfilment rate, acceptance rate, cancellations, timeouts, "
+            f"regional performance, driver stats, and more. Here's a quick summary:\n\n"
+            f"- Total Requests: **{kpi_dict['Total Requests']}**\n"
+            f"- Fulfilment Rate: **{kpi_dict['Fulfillment Rate (%)']}%**\n"
+            f"- Acceptance Rate: **{kpi_dict['Acceptance Rate (%)']}%**\n\n"
+            f"Try asking: *'Which region has the best fulfillment rate?'* or *'Give me a summary.'*")
+
+
 st.write('## 🤖 AI Data Assistant')
 st.markdown("""
 Ask me anything about the filtered data — fulfilment rates, acceptance rates, driver performance,
@@ -418,62 +485,8 @@ Always format rates to 2 decimal places. Be helpful, precise, and data-driven.
         assistant_reply = response_data['content'][0]['text']
     except Exception as e:
         # Fallback: answer from the summary directly without API
-        assistant_reply = _local_answer(user_input, kpi_data, filtered_df, dist_range)
+        assistant_reply = _local_answer(user_input, kpi_data, filtered_df.copy(), dist_range)
 
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_reply})
     with st.chat_message("assistant"):
         st.markdown(assistant_reply)
-
-
-def _local_answer(question, kpi_dict, data, dist_range):
-    """Fallback local answering when API is unavailable."""
-    q = question.lower()
-    region_kpis = build_kpi_table(data.copy(), 'Region')
-
-    if 'fulfillment' in q or 'fulfilment' in q:
-        if 'region' in q or 'best' in q or 'highest' in q:
-            if not region_kpis.empty:
-                best = region_kpis.loc[region_kpis['Fulfillment Rate (%)'].idxmax()]
-                return (f"The region with the highest fulfilment rate is **{best['Region']}** "
-                        f"at **{best['Fulfillment Rate (%)']:.2f}%** "
-                        f"({int(best['Total Trips'])} trips out of {int(best['Total Requests'])} requests).")
-        if 'lowest' in q or 'worst' in q:
-            if not region_kpis.empty:
-                worst = region_kpis.loc[region_kpis['Fulfillment Rate (%)'].idxmin()]
-                return (f"The region with the lowest fulfilment rate is **{worst['Region']}** "
-                        f"at **{worst['Fulfillment Rate (%)']:.2f}%**.")
-        return (f"The overall **Fulfilment Rate** for the current filters is **{kpi_dict['Fulfillment Rate (%)']}%**. "
-                f"This is based on {kpi_dict['Total Trips']} trips vs "
-                f"{kpi_dict['Driver Cancellations']} driver cancellations and "
-                f"{kpi_dict['Rider Cancellations']} rider cancellations.")
-
-    if 'acceptance' in q:
-        return (f"The overall **Acceptance Rate** is **{kpi_dict['Acceptance Rate (%)']}%**. "
-                f"Calculated from {kpi_dict['Total Trips']} trips against all outcomes including "
-                f"{kpi_dict['Timeouts']} timeouts.")
-
-    if 'summary' in q or 'overview' in q:
-        return (f"**Dashboard Summary** (Distance filter: {dist_range[0]}–{dist_range[1]} km)\n\n"
-                f"- Total Requests: **{kpi_dict['Total Requests']}**\n"
-                f"- Total Trips: **{kpi_dict['Total Trips']}**\n"
-                f"- Fulfilment Rate: **{kpi_dict['Fulfillment Rate (%)']}%**\n"
-                f"- Acceptance Rate: **{kpi_dict['Acceptance Rate (%)']}%**\n"
-                f"- Driver Cancellations: **{kpi_dict['Driver Cancellations']}** "
-                f"({kpi_dict['Driver Cancellation Rate (%)']}%)\n"
-                f"- Rider Cancellations: **{kpi_dict['Rider Cancellations']}**\n"
-                f"- Timeouts: **{kpi_dict['Timeouts']}**\n"
-                f"- No Driver Found: **{kpi_dict['No Driver Found Cases']}**")
-
-    if 'driver cancell' in q:
-        return (f"Driver Cancellation Rate is **{kpi_dict['Driver Cancellation Rate (%)']}%** "
-                f"({kpi_dict['Driver Cancellations']} cancellations out of {kpi_dict['Total Requests']} requests).")
-
-    if 'distance' in q:
-        return f"The current distance from rider filter is set to **{dist_range[0]} – {dist_range[1]} km**."
-
-    return (f"I can answer questions about fulfilment rate, acceptance rate, cancellations, timeouts, "
-            f"regional performance, driver stats, and more. Here's a quick summary:\n\n"
-            f"- Total Requests: **{kpi_dict['Total Requests']}**\n"
-            f"- Fulfilment Rate: **{kpi_dict['Fulfillment Rate (%)']}%**\n"
-            f"- Acceptance Rate: **{kpi_dict['Acceptance Rate (%)']}%**\n\n"
-            f"Try asking: *'Which region has the best fulfillment rate?'* or *'Give me a summary.'*")
