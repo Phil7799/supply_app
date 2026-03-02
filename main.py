@@ -52,6 +52,19 @@ dist_range = st.sidebar.slider(
     step=0.5
 )
 
+# ── NEW: Hour range filter ──
+st.sidebar.markdown("---")
+st.sidebar.subheader("🕐 Hour Filter")
+hour_min_val = int(df['Hour'].min())
+hour_max_val = int(df['Hour'].max())
+hour_range = st.sidebar.slider(
+    'Hour of Day',
+    min_value=hour_min_val,
+    max_value=hour_max_val,
+    value=(hour_min_val, hour_max_val),
+    step=1
+)
+
 # ─────────────────────────────────────────────
 # APPLY FILTERS
 # ─────────────────────────────────────────────
@@ -69,6 +82,7 @@ filtered_df = df[
     ((df['Region'] == selected_region) | (selected_region == 'All')) &
     ((df['Corporate'] == selected_corporate) | (selected_corporate == 'All')) &
     ((df[dist_col] >= dist_range[0]) & (df[dist_col] <= dist_range[1]))  # distance filter
+    ((df['Hour'] >= hour_range[0]) & (df['Hour'] <= hour_range[1]))  # hour filter
 ]
 
 # Drop rows with NaN Lat/Lon for map
@@ -167,6 +181,53 @@ chart2 = alt.Chart(request_count_by_hour).mark_line(interpolate='basis').encode(
     tooltip=['Hour', 'count']
 ).properties(width=1500, height=400, title='Request Count by Category Over Hour').interactive()
 st.altair_chart(chart2)
+
+# ── Line chart: Fulfillment Rate & Acceptance Rate by Hour ──
+st.write('### 📈 Fulfillment Rate & Acceptance Rate by Hour')
+
+def compute_rates_by_hour(data):
+    trips = data[data['Category'] == 'Trips'].groupby('Hour').size().reset_index(name='Trips')
+    dc = data[data['Category'] == 'Driver Cancellation'].groupby('Hour').size().reset_index(name='DC')
+    rc = data[data['Category'] == 'Rider Cancellation'].groupby('Hour').size().reset_index(name='RC')
+    to = data[data['Category'] == 'Timeout'].groupby('Hour').size().reset_index(name='Timeout')
+
+    merged = trips.merge(dc, on='Hour', how='outer') \
+                  .merge(rc, on='Hour', how='outer') \
+                  .merge(to, on='Hour', how='outer').fillna(0)
+
+    merged['Fulfillment Rate (%)'] = (
+        merged['Trips'] / (merged['Trips'] + merged['DC'] + merged['RC']).clip(lower=1)
+    ) * 100
+    merged['Acceptance Rate (%)'] = (
+        merged['Trips'] / (merged['Trips'] + merged['DC'] + merged['RC'] + merged['Timeout']).clip(lower=1)
+    ) * 100
+    return merged
+
+rates_by_hour = compute_rates_by_hour(filtered_df)
+
+if not rates_by_hour.empty:
+    # Melt to long format for Altair
+    rates_melted = rates_by_hour[['Hour', 'Fulfillment Rate (%)', 'Acceptance Rate (%)']].melt(
+        id_vars='Hour', var_name='Metric', value_name='Rate (%)'
+    )
+
+    chart_rates = alt.Chart(rates_melted).mark_line(point=True, interpolate='monotone').encode(
+        x=alt.X('Hour:O', title='Hour of Day', sort=list(range(24))),
+        y=alt.Y('Rate (%):Q', title='Rate (%)', scale=alt.Scale(domain=[0, 100])),
+        color=alt.Color('Metric:N', scale=alt.Scale(
+            domain=['Fulfillment Rate (%)', 'Acceptance Rate (%)'],
+            range=['#2ecc71', '#3498db']
+        )),
+        tooltip=['Hour', 'Metric', alt.Tooltip('Rate (%):Q', format='.2f')]
+    ).properties(
+        width=1500,
+        height=400,
+        title='Fulfillment Rate & Acceptance Rate by Hour of Day'
+    ).interactive()
+
+    st.altair_chart(chart_rates)
+else:
+    st.warning("Not enough data to compute hourly rates.")
 
 # ─────────────────────────────────────────────
 # HEAT MAPS (NEW)
