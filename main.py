@@ -81,8 +81,8 @@ filtered_df = df[
     ((df['COUNTRY'] == selected_country) | (selected_country == 'All')) &
     ((df['Region'] == selected_region) | (selected_region == 'All')) &
     ((df['Corporate'] == selected_corporate) | (selected_corporate == 'All')) &
-    ((df[dist_col] >= dist_range[0]) & (df[dist_col] <= dist_range[1]))  # distance filter
-    ((df['Hour'] >= hour_range[0]) & (df['Hour'] <= hour_range[1]))  # hour filter
+    ((df[dist_col] >= dist_range[0]) & (df[dist_col] <= dist_range[1])) &
+    ((df['Hour'] >= hour_range[0]) & (df['Hour'] <= hour_range[1]))
 ]
 
 # Drop rows with NaN Lat/Lon for map
