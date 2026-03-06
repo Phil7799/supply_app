@@ -600,8 +600,8 @@ def _local_answer(question, kpi_dict, data, d_range):
             f"- Fulfilment Rate: **{kpi_dict['Fulfillment Rate (%)']}%**\n"
             f"- Acceptance Rate: **{kpi_dict['Acceptance Rate (%)']}%**")
 
-st.write('## 🤖 Nexus Philip')
-st.markdown("Ask me anything about the filtered data — fulfilment rates, acceptance rates, driver performance, regional breakdowns, and more.")
+st.write('## 🤖 Nexus Phil')
+st.markdown("Ask me anything about the filtered data: fulfilment rates, acceptance rates, driver performance, regional breakdowns, and more.")
 
 def build_data_summary(data, kpi_dict):
     region_kpis = build_kpi_table(data.copy(), 'Region')
