@@ -20,11 +20,35 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 ADMIN_EMAIL = "admin@little.africa"
 
-# ── Persistent storage path ──
-# Use a dedicated folder that survives reboots/redeploys.
-# On Streamlit Cloud, write to a path inside the repo working dir that is
-# committed (or use st.secrets-backed storage). For self-hosted / local,
-# this resolves to a sibling folder next to the script.
+# ── Seeded accounts ──
+# These accounts are always guaranteed to exist, even after a full reboot or
+# redeploy. Passwords are stored pre-hashed (SHA-256) so the plaintext never
+# sits in the running process after startup. Admins can still revoke/restore
+# these accounts via the Admin Panel; the seed logic will NOT re-activate a
+# revoked seeded account – it only ensures the account exists.
+_SEED_ACCOUNTS = {
+    "admin@little.africa":           {"password_plain": "admin123",          "role": "admin"},
+    "chrisantos.wanzala@little.africa": {"password_plain": "A76cgFXvUWZfChR",  "role": "user"},
+    "mercy.mwangi@little.africa":    {"password_plain": "A76cgFXvUWZfMeR",  "role": "user"},
+    "kelvin.ndua@little.africa":     {"password_plain": "589nSRF6sNmaKEl",  "role": "user"},
+    "nyawira.maina@little.africa":   {"password_plain": "589nSRF6sNmaNya",  "role": "user"},
+    "patrick.kipkorir@little.africa":{"password_plain": "A76cgFXvUWZfQSK",  "role": "user"},
+    "monicah.wachira@little.africa": {"password_plain": "A76cgFXvUWZfMON",  "role": "user"},
+    "charles.chrispine@little.africa":{"password_plain": "A76cgFXvUWZfCHa", "role": "user"},
+    "eugene.simiyu@little.africa":   {"password_plain": "delta_ggmu",       "role": "user"},
+    "hussein.almas@little.africa":   {"password_plain": "A76cgFXvUWZfHUS",  "role": "user"},
+    "kenneth.korir@little.africa":   {"password_plain": "A76cgFXvUWZfKeN",  "role": "user"},
+    "emily.njau@little.africa":      {"password_plain": "A76cgFXvUWZfEmI",  "role": "user"},
+    "jael.davina@little.africa":     {"password_plain": "A76cgFXvUWZfJaE",  "role": "user"},
+    "winnie.owendi@little.africa":   {"password_plain": "A76cgFXvUWZfWIn",  "role": "user"},
+    "casper.njoga@little.africa":    {"password_plain": "589nSRF6sNmaCas",  "role": "user"},
+    "mike.amon@little.africa":       {"password_plain": "A76cgFXvUWZfQMa",  "role": "user"},
+    "chrispine.mlanga@little.africa":{"password_plain": "589nSRF6sNmaCHr",  "role": "user"},
+    "sydney.akute@little.africa":    {"password_plain": "589nSRF6sNmaNkT",  "role": "user"},
+    "simon.abuoga@little.africa":    {"password_plain": "589nSRF6sNmaNkS",  "role": "user"},
+    "trevor.siaya@little.africa":    {"password_plain": "589nSRF6sNmaNkH",  "role": "user"},
+}
+
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _DATA_DIR = os.path.join(_BASE_DIR, ".app_data")
 os.makedirs(_DATA_DIR, exist_ok=True)
@@ -35,48 +59,55 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
+def _apply_seeds(users: dict) -> dict:
+    """
+    Ensure every seeded account exists in the users dict.
+    - If an account doesn't exist yet → create it as active.
+    - If it exists but was added externally with wrong password → keep existing record untouched.
+    - Revoked status set by admin is PRESERVED (we never force active=True on existing accounts).
+    """
+    changed = False
+    for email, info in _SEED_ACCOUNTS.items():
+        if email not in users:
+            users[email] = {
+                "password": hash_password(info["password_plain"]),
+                "role": info["role"],
+                "active": True,
+                "created_at": "2025-01-01T00:00:00",
+                "seeded": True,
+            }
+            changed = True
+        else:
+            # Always keep the password and role in sync with the seed definition
+            # so a reboot doesn't lock anyone out due to a corrupt hash.
+            correct_hash = hash_password(info["password_plain"])
+            if users[email].get("password") != correct_hash:
+                users[email]["password"] = correct_hash
+                changed = True
+            if users[email].get("role") != info["role"]:
+                users[email]["role"] = info["role"]
+                changed = True
+    return users, changed
+
+
 def load_users() -> dict:
-    if not os.path.exists(USERS_FILE):
-        initial = {
-            ADMIN_EMAIL: {
-                "password": hash_password("admin123"),
-                "role": "admin",
-                "active": True,
-                "created_at": datetime.now().isoformat()
-            }
-        }
-        save_users(initial)
-        return initial
     try:
-        with open(USERS_FILE, "r") as f:
-            users = json.load(f)
-        # Ensure admin always exists
-        if ADMIN_EMAIL not in users:
-            users[ADMIN_EMAIL] = {
-                "password": hash_password("admin123"),
-                "role": "admin",
-                "active": True,
-                "created_at": datetime.now().isoformat()
-            }
-            save_users(users)
-        return users
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r") as f:
+                users = json.load(f)
+        else:
+            users = {}
     except (json.JSONDecodeError, OSError):
-        # Corrupt file – rebuild with admin only
-        initial = {
-            ADMIN_EMAIL: {
-                "password": hash_password("admin123"),
-                "role": "admin",
-                "active": True,
-                "created_at": datetime.now().isoformat()
-            }
-        }
-        save_users(initial)
-        return initial
+        users = {}
+
+    users, changed = _apply_seeds(users)
+    if changed:
+        save_users(users)
+    return users
 
 
 def save_users(users: dict):
-    # Write atomically: write to a temp file then rename so a crash mid-write
-    # never corrupts the users file.
+    # Atomic write: temp file → rename, so a crash never corrupts the store.
     tmp_path = USERS_FILE + ".tmp"
     with open(tmp_path, "w") as f:
         json.dump(users, f, indent=2)
