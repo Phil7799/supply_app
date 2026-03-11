@@ -47,6 +47,7 @@ _SEED_ACCOUNTS = {
     "sydney.akute@little.africa":    {"password_plain": "589nSRF6sNmaNkT",  "role": "user"},
     "simon.abuoga@little.africa":    {"password_plain": "589nSRF6sNmaNkS",  "role": "user"},
     "trevor.siaya@little.africa":    {"password_plain": "589nSRF6sNmaNkH",  "role": "user"},
+    "eric.njema@little.africa":    {"password_plain": "A76cgFXvUWZfErc",  "role": "user"},
 }
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
