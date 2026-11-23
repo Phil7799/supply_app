@@ -324,19 +324,47 @@ df = load_data()
 
 
 # ─────────────────────────────────────────────
+# SAFE OPTIONS HELPER (fixes the TypeError)
+# ─────────────────────────────────────────────
+def safe_options(series):
+    """
+    Return a clean sorted list of unique string values.
+    Drops NaNs and forces everything to str so sorted() never fails.
+    """
+    return sorted(series.dropna().astype(str).unique().tolist())
+
+
+# ─────────────────────────────────────────────
 # SIDEBAR FILTERS
 # ─────────────────────────────────────────────
 st.sidebar.title('Filters')
-selected_cities = st.sidebar.multiselect('Select City', ['All'] + sorted(df['CITY'].unique(), key=str))
-selected_vehicle_types = st.sidebar.multiselect('Select Vehicle Type', ['All'] + sorted(df['VEHICLETYPE'].astype(str).unique()))
+
+selected_cities = st.sidebar.multiselect(
+    'Select City', ['All'] + safe_options(df['CITY'])
+)
+selected_vehicle_types = st.sidebar.multiselect(
+    'Select Vehicle Type', ['All'] + safe_options(df['VEHICLETYPE'])
+)
 selected_date_from = st.sidebar.date_input('Select Date From')
 selected_date_to = st.sidebar.date_input('Select Date To')
-selected_driver = st.sidebar.selectbox('Select Driver', ['All'] + sorted(df['DRIVER'].astype(str).unique()))
-selected_trip_type = st.sidebar.selectbox('Select Trip Type', ['All'] + sorted(df['TRIPTYPE'].astype(str).unique()))
-selected_rider = st.sidebar.selectbox('Select Rider', ['All'] + sorted(df['Rider Mobile Number'].astype(str).unique()))
-selected_country = st.sidebar.selectbox('Select Country', ['All'] + sorted(df['COUNTRY'].astype(str).unique()))
-selected_region = st.sidebar.selectbox('Select Region', ['All'] + sorted(df['Region'].unique(), key=str))
-selected_corporate = st.sidebar.selectbox('Select Corporate', ['All'] + sorted(df['Corporate'].unique(), key=str))
+selected_driver = st.sidebar.selectbox(
+    'Select Driver', ['All'] + safe_options(df['DRIVER'])
+)
+selected_trip_type = st.sidebar.selectbox(
+    'Select Trip Type', ['All'] + safe_options(df['TRIPTYPE'])
+)
+selected_rider = st.sidebar.selectbox(
+    'Select Rider', ['All'] + safe_options(df['Rider Mobile Number'])
+)
+selected_country = st.sidebar.selectbox(
+    'Select Country', ['All'] + safe_options(df['COUNTRY'])
+)
+selected_region = st.sidebar.selectbox(
+    'Select Region', ['All'] + safe_options(df['Region'])
+)
+selected_corporate = st.sidebar.selectbox(
+    'Select Corporate', ['All'] + safe_options(df['Corporate'])
+)
 
 # ── Distance from Rider range filter ──
 st.sidebar.markdown("---")
@@ -373,15 +401,15 @@ selected_date_from = pd.Timestamp(selected_date_from)
 selected_date_to = pd.Timestamp(selected_date_to)
 
 filtered_df = df[
-    ((df['CITY'].isin(selected_cities)) | ('All' in selected_cities)) &
+    ((df['CITY'].astype(str).isin(selected_cities)) | ('All' in selected_cities)) &
     ((df['VEHICLETYPE'].astype(str).isin(selected_vehicle_types)) | ('All' in selected_vehicle_types)) &
     ((df['Date'] >= selected_date_from) & (df['Date'] <= selected_date_to)) &
-    ((df['DRIVER'] == selected_driver) | (selected_driver == 'All')) &
-    ((df['TRIPTYPE'] == selected_trip_type) | (selected_trip_type == 'All')) &
+    ((df['DRIVER'].astype(str) == selected_driver) | (selected_driver == 'All')) &
+    ((df['TRIPTYPE'].astype(str) == selected_trip_type) | (selected_trip_type == 'All')) &
     ((df['Rider Mobile Number'].astype(str) == selected_rider) | (selected_rider == 'All')) &
-    ((df['COUNTRY'] == selected_country) | (selected_country == 'All')) &
-    ((df['Region'] == selected_region) | (selected_region == 'All')) &
-    ((df['Corporate'] == selected_corporate) | (selected_corporate == 'All')) &
+    ((df['COUNTRY'].astype(str) == selected_country) | (selected_country == 'All')) &
+    ((df['Region'].astype(str) == selected_region) | (selected_region == 'All')) &
+    ((df['Corporate'].astype(str) == selected_corporate) | (selected_corporate == 'All')) &
     ((df[dist_col] >= dist_range[0]) & (df[dist_col] <= dist_range[1])) &
     ((df['Hour'] >= hour_range[0]) & (df['Hour'] <= hour_range[1]))
 ]
@@ -538,7 +566,7 @@ def compute_fulfillment_pivot(data):
 
 fr_data = compute_fulfillment_pivot(filtered_df)
 if not fr_data.empty:
-    all_regions_fr = sorted(fr_data['Region'].unique().tolist(), key=str)
+    all_regions_fr = sorted(fr_data['Region'].astype(str).unique().tolist())
     heatmap_fr = alt.Chart(fr_data).mark_rect().encode(
         x=alt.X('Hour:O', title='Hour of Day', sort=list(range(24))),
         y=alt.Y('Region:N', title='Region', sort=all_regions_fr, axis=alt.Axis(labelLimit=200)),
@@ -553,7 +581,7 @@ else:
 st.write('### Total Requests Heatmap (Region × Hour)')
 req_by_region_hour = filtered_df.groupby(['Region', 'Hour']).size().reset_index(name='Total Requests')
 if not req_by_region_hour.empty:
-    all_regions_req = sorted(req_by_region_hour['Region'].unique().tolist(), key=str)
+    all_regions_req = sorted(req_by_region_hour['Region'].astype(str).unique().tolist())
     heatmap_req = alt.Chart(req_by_region_hour).mark_rect().encode(
         x=alt.X('Hour:O', title='Hour of Day', sort=list(range(24))),
         y=alt.Y('Region:N', title='Region', sort=all_regions_req, axis=alt.Axis(labelLimit=200)),
